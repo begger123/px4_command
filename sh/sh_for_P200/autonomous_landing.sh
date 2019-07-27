@@ -5,7 +5,7 @@ gnome-terminal --window -e 'bash -c "roscore; exec bash"' \
 --tab -e 'bash -c "sleep 2; roslaunch px4_command px4_pos_controller.launch; exec bash"' \
 --tab -e 'bash -c "sleep 5; roslaunch px4_command tfmini.launch; exec bash"' \
 --tab -e 'bash -c "sleep 2; roslaunch rplidar_ros rplidar.launch; exec bash"' \
---tab -e 'bash -c "sleep 5; roslaunch cartographer_ros rplidar.launch; exec bash"' \
+--tab -e 'bash -c "sleep 5; roslaunch cartographer_ros my_lidar_imu.launch; exec bash"' \
 --tab -e 'bash -c "sleep 2; roslaunch landpad_det landpad_det.launch; exec bash"' \
 --tab -e 'bash -c "sleep 2; roslaunch px4_command autonomous_landing.launch; exec bash"' \
 

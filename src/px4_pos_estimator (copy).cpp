@@ -30,7 +30,6 @@
 
 //头文件
 #include <ros/ros.h>
-#include <tf2_ros/transform_listener.h>
 
 #include <iostream>
 #include <Eigen/Eigen>
@@ -61,7 +60,6 @@
 using namespace std;
 //---------------------------------------相关参数-----------------------------------------------
 int flag_use_laser_or_vicon;                               //0:使用mocap数据作为定位数据 1:使用laser数据作为定位数据
-bool ready_for_pub = false;                                //true：已准备好发布数据 false：未准备好发布数据
 //---------------------------------------vicon定位相关------------------------------------------
 Eigen::Vector3d pos_drone_mocap;                          //无人机当前位置 (vicon)
 Eigen::Quaterniond q_mocap;
@@ -73,8 +71,6 @@ Eigen::Vector3d Euler_laser;                                         //无人机
 
 geometry_msgs::TransformStamped laser;                          //当前时刻cartorgrapher发布的数据
 geometry_msgs::TransformStamped laser_last;
-
-double tfmini_raw;                                        //获取到的来自tfmini的原始数据(相对距离)
 //---------------------------------------无人机位置及速度--------------------------------------------
 Eigen::Vector3d pos_drone_fcu;                           //无人机当前位置 (来自fcu)
 Eigen::Vector3d vel_drone_fcu;                           //无人机上一时刻位置 (来自fcu)
@@ -85,25 +81,15 @@ Eigen::Vector3d Euler_fcu;                                          //无人机�
 geometry_msgs::PoseStamped vision;
 //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>函数声明<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 float get_dt(ros::Time last);                                                        //获取时间间隔
-void printf_info();                                                                  //打印函数
-void pose_pub_timer_cb(const ros::TimerEvent& TE);                                   //ros::Timer的回调函数
+void printf_info();                                                                       //打印函数
 //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>回调函数<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 void laser_cb(const tf2_msgs::TFMessage::ConstPtr& msg)
 {
     //确定是cartographer发出来的/tf信息
     //有的时候/tf这个消息的发布者不止一个
-    if(msg->transforms[0].child_frame_id == "base_link" && msg->transforms[0].header.frame_id == "map" )
+    if (msg->transforms[0].header.frame_id == "map")
     {
         laser = msg->transforms[0];
-    }
-    else
-    {
-        //使用ros中的tf2来获得map到base_link坐标系的转换。当有odom信息的时候,/tf话题里会有 map->odom  odom->base_link 两组消息,而我们想要的是 map->base_link
-        static tf2_ros::Buffer tf2Buffer;
-        static tf2_ros::TransformListener tf2Listener(tf2Buffer);
-
-        laser = tf2Buffer.lookupTransform("map","base_link",ros::Time(0));//ros::Time(0)参数表示获取缓冲区中能获得的最新的tf转换关系
-    }
 
         float dt_laser;
 
@@ -126,8 +112,8 @@ void laser_cb(const tf2_msgs::TFMessage::ConstPtr& msg)
         }
 
         laser_last = laser;
+    }
 }
-
 void sonic_cb(const std_msgs::UInt16::ConstPtr& msg)
 {
     std_msgs::UInt16 sonic;
@@ -140,22 +126,12 @@ void sonic_cb(const std_msgs::UInt16::ConstPtr& msg)
 
 void tfmini_cb(const sensor_msgs::Range::ConstPtr& msg)
 {
+    sensor_msgs::Range tfmini;
 
-    tfmini_raw = msg->range;
+    tfmini = *msg;
 
-}
-
-//当无人机倾斜时,计算映射出的垂直高度
-double vrt_h_map(const double& tfmini_raw,const double& roll,const double& pitch)
-{
-    //已知斜边,横滚角,俯仰角计算 映射出的垂直高度
-    double vrt_h = tfmini_raw*cos(atan(sqrt( tan(roll)*tan(roll) + tan(pitch)*tan(pitch) )));
-    //精度只取小数点后两位
-    vrt_h = double(int(vrt_h*100)/100.0);
-
-    //ROS_INFO_STREAM("vrth:" << vrt_h << endl);
-
-    return vrt_h;
+    //位置
+    pos_drone_laser[2]  = tfmini.range ;
 
 }
 
@@ -250,9 +226,8 @@ int main(int argc, char **argv)
     //  本话题要发送飞控(通过mavros_extras/src/plugins/vision_pose_estimate.cpp发送), 对应Mavlink消息为VISION_POSITION_ESTIMATE(#??), 对应的飞控中的uORB消息为vehicle_vision_position.msg 及 vehicle_vision_attitude.msg
     ros::Publisher vision_pub = nh.advertise<geometry_msgs::PoseStamped>("/mavros/vision_pose/pose", 100);
 
-    //ros::Timer,ros中的定时器
-    //设置频率为20HZ
-    ros::Timer pose_pub_timer = nh.createTimer(ros::Duration(1.0/20.0),pose_pub_timer_cb);
+    // 频率
+    ros::Rate rate(20.0);
 
 //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Main Loop<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
     while(ros::ok())
@@ -260,57 +235,42 @@ int main(int argc, char **argv)
         //回调一次 更新传感器状态
         ros::spinOnce();
 
-        if(ready_for_pub)
+        //vicon
+        if(flag_use_laser_or_vicon == 0)
         {
-            vision_pub.publish(vision);
-            ready_for_pub = false;
-            //实时打印数据到terminal
-            printf_info();
+            vision.pose.position.x = pos_drone_mocap[0] ;
+            vision.pose.position.y = pos_drone_mocap[1] ;
+            vision.pose.position.z = pos_drone_mocap[2] ;
+
+            vision.pose.orientation.x = q_mocap.x();
+            vision.pose.orientation.y = q_mocap.y();
+            vision.pose.orientation.z = q_mocap.z();
+            vision.pose.orientation.w = q_mocap.w();
+
+        }//laser
+        else if (flag_use_laser_or_vicon == 1)
+        {
+            vision.pose.position.x = pos_drone_laser[0];
+            vision.pose.position.y = pos_drone_laser[1];
+            vision.pose.position.z = pos_drone_laser[2];
+
+            vision.pose.orientation.x = q_laser.x();
+            vision.pose.orientation.y = q_laser.y();
+            vision.pose.orientation.z = q_laser.z();
+            vision.pose.orientation.w = q_laser.w();
         }
 
+        vision.header.stamp = ros::Time::now();
+        vision_pub.publish(vision);
 
+        //打印
+        printf_info();
+        rate.sleep();
     }
 
     return 0;
 
 }
-
-void pose_pub_timer_cb(const ros::TimerEvent& TE)
-{
-    //进行垂直高度的映射，反映真实的z轴高度
-    pos_drone_laser[2] = vrt_h_map(tfmini_raw,Euler_fcu[0],Euler_fcu[1]);
-    //ROS_INFO("%f  %f  %f\n",pos_drone_laser[2],Euler_fcu[0],Euler_fcu[1]);
-
-    //vicon
-    if(flag_use_laser_or_vicon == 0)
-    {
-        vision.pose.position.x = pos_drone_mocap[0] ;
-        vision.pose.position.y = pos_drone_mocap[1] ;
-        vision.pose.position.z = pos_drone_mocap[2] ;
-
-        vision.pose.orientation.x = q_mocap.x();
-        vision.pose.orientation.y = q_mocap.y();
-        vision.pose.orientation.z = q_mocap.z();
-        vision.pose.orientation.w = q_mocap.w();
-
-    }//laser
-    else if (flag_use_laser_or_vicon == 1)
-    {
-        vision.pose.position.x = pos_drone_laser[0];
-        vision.pose.position.y = pos_drone_laser[1];
-        vision.pose.position.z = pos_drone_laser[2];
-
-        vision.pose.orientation.x = q_laser.x();
-        vision.pose.orientation.y = q_laser.y();
-        vision.pose.orientation.z = q_laser.z();
-        vision.pose.orientation.w = q_laser.w();
-    }
-
-    vision.header.stamp = TE.current_real;
-    ready_for_pub = true;
-
-}
-
 
 //获取当前时间 单位：秒
 float get_dt(ros::Time last)
