@@ -25,7 +25,7 @@ using namespace std;
 using namespace namespace_command_to_mavros;
 using namespace namespace_PID;
 
-//自定义的Command变量
+
 //相应的命令分别为 待机 起飞 悬停 降落 移动(惯性系ENU) 上锁 移动(机体系)
 //但目前 起飞和待机 并没有正式使用
 enum Command
